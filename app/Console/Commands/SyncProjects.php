@@ -73,6 +73,7 @@ class SyncProjects extends Command
     {
         $jiraProjects = collect($this->jiraProjects->getAllProjects());
         $togglProjects = collect($this->toggl->getWorkspaceProjects($this->togglWorkspaceId));
+        $togglTasks = collect($this->toggl->getWorkspaceTasks($this->togglWorkspaceId,['active'=>'both']));
 
         foreach ($jiraProjects as $jiraProject) {
             $this->info("Syncing {$jiraProject->name} ({$jiraProject->key})...");
@@ -83,7 +84,7 @@ class SyncProjects extends Command
             }
 
             $this->info('Issues...');
-            $this->syncIssues($jiraProject, $togglProject);
+            $this->syncIssues($jiraProject, $togglProject, $togglTasks->where('pid', $togglProject->id));
             $this->info("Done. \n");
         }
     }
@@ -114,16 +115,14 @@ class SyncProjects extends Command
     /**
      * @param $jiraProject
      * @param $togglProject
+     * @param $togglTasks
      * @throws \JsonMapper_Exception
      */
-    protected function syncIssues($jiraProject, $togglProject)
+    protected function syncIssues($jiraProject, $togglProject, $togglTasks)
     {
         $maxResults = 50;
         $startAt = 0;
         $remainingIssues = null;
-
-        $togglTasks = collect($this->toggl->getProjectTasks($togglProject->id));
-
         $progressBar = null;
 
         do {
@@ -139,7 +138,7 @@ class SyncProjects extends Command
             }
 
             foreach ($results->getIssues() as $issue) {
-                $this->createTaskIfNotExists($togglProject, $togglTasks, $issue);
+                $this->createOrSyncTask($togglProject, $togglTasks, $issue);
 
                 $progressBar->advance();
             }
@@ -178,17 +177,27 @@ class SyncProjects extends Command
      * @param $issue
      * @return mixed
      */
-    protected function createTaskIfNotExists($togglProject, Collection $togglTasks, Issue $issue)
+    protected function createOrSyncTask($togglProject, Collection $togglTasks, Issue $issue)
     {
         $task = $togglTasks->filter(function ($value) use ($issue) {
             return str_contains($value->name, $issue->key);
         })->first();
 
+        $active = in_array($issue->fields->status->name, ['To Do', 'In Progress']);
+
         if (!$task) {
             $this->toggl->createTask([
-                'name' => "{$issue->key} {$issue->fields->summary}",
-                'pid' => $togglProject->id
+                'name'   => "{$issue->key} {$issue->fields->summary}",
+                'pid'    => $togglProject->id,
+                'active' => $active
             ]);
+        } elseif ($active != $task->active) {
+            $this->toggl->updateTask(
+                $task->id,
+                [
+                    "active" => $active
+                ]
+            );
         }
 
         return $task;
