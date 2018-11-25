@@ -183,7 +183,7 @@ class SyncProjects extends Command
             return str_contains($value->name, $issue->key);
         })->first();
 
-        $active = in_array($issue->fields->status->name, ['To Do', 'In Progress']);
+        $active = $issue->fields->status->name != 'Done';
 
         if (!$task) {
             $this->toggl->createTask([
